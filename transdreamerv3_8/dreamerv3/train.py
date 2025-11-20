@@ -169,6 +169,7 @@ def make_env(config, **overrides):
       'minecraft': 'embodied.envs.minecraft:Minecraft',
       'loconav': 'embodied.envs.loconav:LocoNav',
       'pinpad': 'embodied.envs.pinpad:PinPad',
+      'homegrid': 'embodied.envs.homegrid:HomeGrid'
   }[suite]
   if isinstance(ctor, str):
     module, cls = ctor.split(':')
@@ -182,7 +183,9 @@ def make_env(config, **overrides):
 
 def wrap_env(env, config):
   args = config.wrapper
+
   for name, space in env.act_space.items():
+ 
     if name == 'reset':
       continue
     elif space.discrete:
