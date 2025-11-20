@@ -30,7 +30,14 @@ class Agent(nj.Module):
     self.obs_space = obs_space
     self.act_space = act_space['action']
     self.step = step
-    self.wm = WorldModel(obs_space, act_space, config, name='wm')
+    with jax.transfer_guard("allow"):
+      dummy_preproc = self.preprocess(
+        {k: jnp.ones(v.shape) for k, v in self.obs_space.items()}) 
+      preproc_shapes = {k: tuple(v.shape) for k, v in dummy_preproc.items() \
+                        if not k.startswith("log_")}
+    self.wm = WorldModel(obs_space, act_space, config, preproc_shapes, name='wm')
+    self.preprocessors = {k: v() for k, v in
+                          self.wm.encoder.preprocessors.items()}
     self.task_behavior = getattr(behaviors, config.task_behavior)(
         self.wm, self.act_space, self.config, name='task_behavior')
     if config.expl_behavior == 'None':
@@ -53,8 +60,11 @@ class Agent(nj.Module):
     obs = self.preprocess(obs)
     (prev_latent, prev_action), task_state, expl_state = state
     embed = self.wm.encoder(obs)
-    latent, _ = self.wm.rssm.obs_step(
-        prev_latent, prev_action, embed, obs['is_first'])
+    if self.config.rssm_type == "token":
+      raise NotImplementedError
+    else:
+      latent, _ = self.wm.rssm.obs_step(
+          prev_latent, prev_action, embed, obs['is_first'])
     self.expl_behavior.policy(latent, expl_state)
     task_outs, task_state = self.task_behavior.policy(latent, task_state)
     expl_outs, expl_state = self.expl_behavior.policy(latent, expl_state)
@@ -106,7 +116,9 @@ class Agent(nj.Module):
     for key, value in obs.items():
       if key.startswith('log_') or key in ('key',):
         continue
-      if len(value.shape) > 3 and value.dtype == jnp.uint8:
+      if key == "token":
+        value = jax.nn.one_hot(value, self.obs_space[key].high)
+      elif len(value.shape) > 3 and value.dtype == jnp.uint8:
         value = jaxutils.cast_to_compute(value) / 255.0
       else:
         value = value.astype(jnp.float32)
@@ -117,14 +129,21 @@ class Agent(nj.Module):
 
 class WorldModel(nj.Module):
 
-  def __init__(self, obs_space, act_space, config):
+  def __init__(self, obs_space, act_space, config, shapes):
     self.obs_space = obs_space
     self.act_space = act_space['action']
     self.config = config
-    shapes = {k: tuple(v.shape) for k, v in obs_space.items()}
-    shapes = {k: v for k, v in shapes.items() if not k.startswith('log_')}
+    #shapes = {k: tuple(v.shape) for k, v in obs_space.items()}
+    #shapes = {k: v for k, v in shapes.items() if not k.startswith('log_')}
     self.encoder = nets.MultiEncoder(shapes, **config.encoder, name='enc')
-    self.rssm = nets.RSSM(**config.rssm, name='rssm')
+    if self.config.rssm_type == 'rssm':
+      self.rssm = nets.RSSM(**config.rssm, name='rssm')
+    elif self.config.rssm_type == 'early':
+      raise NotImplementedError(self.config.rssm_type)
+    elif self.config.rssm_type == 'token':
+      raise NotImplementedError(self.config.rssm_type)
+    else:
+      raise NotImplementedError(self.config.rssm_type)
     self.heads = {
         'decoder': nets.MultiDecoder(shapes, **config.decoder, name='dec'),
         'reward': nets.MLP((), **config.reward_head, name='rew'),
@@ -153,8 +172,11 @@ class WorldModel(nj.Module):
     prev_latent, prev_action = state
     prev_actions = jnp.concatenate([
         prev_action[:, None], data['action'][:, :-1]], 1)
-    post, prior = self.rssm.observe(
-        embed, prev_actions, data['is_first'], prev_latent)
+    if self.config.rssm_type == "token":
+      raise NotImplemented
+    else:
+      post, prior = self.rssm.observe(
+          embed, prev_actions, data['is_first'], prev_latent)
     dists = {}
     feats = {**post, 'embed': embed}
     for name, head in self.heads.items():
@@ -162,8 +184,30 @@ class WorldModel(nj.Module):
       out = out if isinstance(out, dict) else {name: out}
       dists.update(out)
     losses = {}
-    losses['dyn'] = self.rssm.dyn_loss(post, prior, **self.config.dyn_loss)
-    losses['rep'] = self.rssm.rep_loss(post, prior, **self.config.rep_loss)
+    if self.config.rssm_type == "early":
+      raise NotImplemented
+    elif self.config.rssm_type == "token":
+      raise NotImplemented
+    else:
+      losses['dyn'] = self.rssm.dyn_loss(post, prior, **self.config.dyn_loss)
+      losses['rep'] = self.rssm.rep_loss(post, prior, **self.config.rep_loss)
+    
+    # LM loss
+    if self.scales["lm"] > 0:
+      print("Adding LM loss")
+      next_ac = data["action"][:, :-1].reshape((-1, 1, *data["action"].shape[2:]))
+      context = {k: v[:, :-1].reshape((-1, *v.shape[2:]))
+                 for k, v in post.items()}
+      one_step_openl = self.heads["decoder"](
+        self.rssm.imagine(next_ac, context),
+      )
+      truth = data["token"][:, 1:].reshape((-1, 1, *data["token"].shape[2:]))
+      nll = -(one_step_openl["token"].log_prob(truth)).mean(-1)
+#      nll = nll.reshape((data["token"].shape[0], -1)) # (batch, seq - 1)
+      lm_loss = (nll * self.scales["lm"]).mean()
+    else:
+      lm_loss = 0
+
     for key, dist in dists.items():
       loss = -dist.log_prob(data[key].astype(jnp.float32))
       assert loss.shape == embed.shape[:2], (key, loss.shape)
@@ -176,7 +220,7 @@ class WorldModel(nj.Module):
     last_action = data['action'][:, -1]
     state = last_latent, last_action
     metrics = self._metrics(data, dists, post, prior, losses, model_loss)
-    return model_loss.mean(), (state, out, metrics)
+    return model_loss.mean() + lm_loss, (state, out, metrics)
 
   def imagine(self, policy, start, horizon):
     first_cont = (1.0 - start['is_terminal']).astype(jnp.float32)
@@ -201,7 +245,10 @@ class WorldModel(nj.Module):
     state = self.initial(len(data['is_first']))
     report = {}
     report.update(self.loss(data, state)[-1][-1])
-    context, _ = self.rssm.observe(
+    if self.config.rssm_type == "token":
+      raise NotImplemented
+    else:
+      context, _ = self.rssm.observe(
         self.encoder(data)[:6, :5], data['action'][:6, :5],
         data['is_first'][:6, :5])
     start = {k: v[:, -1] for k, v in context.items()}

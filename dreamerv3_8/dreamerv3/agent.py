@@ -30,7 +30,14 @@ class Agent(nj.Module):
     self.obs_space = obs_space
     self.act_space = act_space['action']
     self.step = step
-    self.wm = WorldModel(obs_space, act_space, config, name='wm')
+    with jax.transfer_guard("allow"):
+      dummy_preproc = self.preprocess(
+        {k: jnp.ones(v.shape) for k, v in self.obs_space.items()}) 
+      preproc_shapes = {k: tuple(v.shape) for k, v in dummy_preproc.items() \
+                        if not k.startswith("log_")}
+
+
+    self.wm = WorldModel(obs_space, act_space, config, preproc_shapes, name='wm')
     self.task_behavior = getattr(behaviors, config.task_behavior)(
         self.wm, self.act_space, self.config, name='task_behavior')
     if config.expl_behavior == 'None':
@@ -117,12 +124,12 @@ class Agent(nj.Module):
 
 class WorldModel(nj.Module):
 
-  def __init__(self, obs_space, act_space, config):
+  def __init__(self, obs_space, act_space, shapes, config):
     self.obs_space = obs_space
     self.act_space = act_space['action']
     self.config = config
-    shapes = {k: tuple(v.shape) for k, v in obs_space.items()}
-    shapes = {k: v for k, v in shapes.items() if not k.startswith('log_')}
+    #shapes = {k: tuple(v.shape) for k, v in obs_space.items()}
+    #shapes = {k: v for k, v in shapes.items() if not k.startswith('log_')}
     self.encoder = nets.MultiEncoder(shapes, **config.encoder, name='enc')
     self.rssm = nets.RSSM(**config.rssm, name='rssm')
     self.heads = {

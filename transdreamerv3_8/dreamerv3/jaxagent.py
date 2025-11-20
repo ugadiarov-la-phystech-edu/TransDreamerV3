@@ -49,7 +49,7 @@ class JAXAgent(embodied.Agent):
     self.sync()
 
   def policy(self, obs, state=None, mode='train'):
-    obs = obs.copy()
+    obs = {k: v for k, v in obs.items() if not k.startswith('log_')}
     obs = self._convert_inps(obs, self.policy_devices)
     rng = self._next_rngs(self.policy_devices)
     varibs = self.varibs if self.single_device else self.policy_varibs
@@ -233,7 +233,7 @@ class JAXAgent(embodied.Agent):
     return varibs
 
   def _dummy_batch(self, spaces, batch_dims):
-    spaces = list(spaces.items())
+    spaces = [(k, v) for k, v in spaces.items() if not k.startswith('log_')]
     data = {k: np.zeros(v.shape, v.dtype) for k, v in spaces}
     for dim in reversed(batch_dims):
       data = {k: np.repeat(v[None], dim, axis=0) for k, v in data.items()}

@@ -21,8 +21,9 @@ cast = jaxutils.cast_to_compute
 class RSSM(nj.Module):
 
   def __init__(
-      self, deter=1024, stoch=32, classes=32, unroll=False, initial='learned',
-      unimix=0.01, action_clip=1.0, **kw):
+      self, impl = 'softmax', deter=1024, stoch=32, classes=32, unroll=False, initial='learned',
+      unimix=0.01, action_clip=1.0, maskgit={}, **kw):
+    self._impl = impl
     self._deter = deter
     self._stoch = stoch
     self._classes = classes
@@ -31,20 +32,31 @@ class RSSM(nj.Module):
     self._unimix = unimix
     self._action_clip = action_clip
     self._kw = kw
+    if self._impl == 'maskgit':
+      from . import maskgit as mg
+      self._maskgit = mg.MaskGit(stoch, classes, **maskgit, name='maskgit')
+
     # self.transformer = Transformer(model_size=(16,1664), num_heads=10, feed_forward_dim=self._deter, num_layers=6)
 
   def initial(self, bs):
-    if self._classes:
+    if self._impl == 'softmax': #if self._classes:
       state = dict(
           deter=jnp.zeros([bs, self._deter], f32),
           logit=jnp.zeros([bs, self._stoch, self._classes], f32),
           stoch=jnp.zeros([bs, self._stoch, self._classes], f32))
-    else:
+    elif self._impl == 'gaussian':
       state = dict(
           deter=jnp.zeros([bs, self._deter], f32),
           mean=jnp.zeros([bs, self._stoch], f32),
           std=jnp.ones([bs, self._stoch], f32),
           stoch=jnp.zeros([bs, self._stoch], f32))
+    if self._impl == 'maskgit':
+      state = dict(
+          deter=jnp.zeros([bs, self._deter], f32),
+          logit=jnp.zeros([bs, self._stoch, self._classes], f32),
+          stoch=jnp.zeros([bs, self._stoch, self._classes], f32),
+          mask=jnp.zeros([bs, self._stoch], bool))
+    
     if self._initial == 'zeros':
       return cast(state)
     elif self._initial == 'learned':
@@ -77,13 +89,17 @@ class RSSM(nj.Module):
     return prior
 
   def get_dist(self, state, argmax=False):
-    if self._classes:
+    if self._impl == 'softmax': #if self._classes:
       logit = state['logit'].astype(f32)
       return tfd.Independent(jaxutils.OneHotDist(logit), 1)
-    else:
+    if self._impl == 'guassian': #else:
       mean = state['mean'].astype(f32)
       std = state['std'].astype(f32)
       return tfd.MultivariateNormalDiag(mean, std)
+    if self._impl == 'maskgit':
+      logit = state['logit'].astype(f32)
+      return jaxutils.OneHotDist(logit)
+    
 
   def obs_step(self, prev_state, prev_action, embed, is_first):
     is_first = cast(is_first)
@@ -132,10 +148,19 @@ class RSSM(nj.Module):
     return cast(prior)
   
   def get_stoch(self, deter):
-    x = self.get('img_out', Linear, **self._kw)(deter)
-    stats = self._stats('img_stats', x)
-    dist = self.get_dist(stats)
-    return cast(dist.mode())
+    if self._impl == 'gaussian' or self._impl == 'softmax':
+      x = self.get('img_out', Linear, **self._kw)(deter)
+      stats = self._stats('img_stats', x)
+      dist = self.get_dist(stats)
+      return cast(dist.mode())
+    if self._impl == 'maskgit':
+      logit = jnp.zeros((*deter.shape[:-1], self._stoch, self._classes), f32)
+      mask = jnp.ones((*deter.shape[:-1], self._stoch), bool)
+      stats = {'logit': logit, 'mask': mask}
+      stoch = self._maskgit.sample(deter.reshape(((-1, deter.shape[-1]))))
+      stoch = stoch.reshape((*deter.shape[:-1], *stoch.shape[1:]))
+      return cast({'stoch': stoch, 'deter': deter, **stats})
+
 
   def _gru(self, x, deter):
     x = jnp.concatenate([deter, x], -1)
@@ -149,7 +174,7 @@ class RSSM(nj.Module):
     return deter, deter
 
   def _stats(self, name, x):
-    if self._classes:
+    if self._impl == 'softmax': #if self._classes:
       x = self.get(name, Linear, self._stoch * self._classes)(x)
       logit = x.reshape(x.shape[:-1] + (self._stoch, self._classes))
       if self._unimix:
@@ -159,11 +184,21 @@ class RSSM(nj.Module):
         logit = jnp.log(probs)
       stats = {'logit': logit}
       return stats
-    else:
+    if self._impl == 'guassian':
       x = self.get(name, Linear, 2 * self._stoch)(x)
       mean, std = jnp.split(x, 2, -1)
       std = 2 * jax.nn.sigmoid(std / 2) + 0.1
       return {'mean': mean, 'std': std}
+    if self._impl == 'maskgit':
+      x = self.get(name, Linear, self._stoch * self._classes)(x)
+      logit = x.reshape(x.shape[:-1] + (self._stoch, self._classes))
+      if self._unimix:
+        probs = jax.nn.softmax(logit, -1)
+        uniform = jnp.ones_like(probs) / probs.shape[-1]
+        probs = (1 - self._unimix) * probs + self._unimix * uniform
+        logit = jnp.log(probs)
+      mask = jnp.ones((x.shape[0], self._stoch), bool)
+      return {'logit': logit, 'mask': mask}
 
   def _mask(self, value, mask):
     return jnp.einsum('b...,b->b...', value, mask.astype(value.dtype))
@@ -175,6 +210,8 @@ class RSSM(nj.Module):
       loss = -self.get_dist(prior).log_prob(sg(post['stoch']))
     else:
       raise NotImplementedError(impl)
+    if self._impl == 'maskgit':
+      loss = (loss * prior['mask']).sum(-1) / prior['mask'].sum(-1)
     if free:
       loss = jnp.maximum(loss, free)
     return loss
@@ -191,6 +228,8 @@ class RSSM(nj.Module):
       loss = jnp.zeros(post['deter'].shape[:-1])
     else:
       raise NotImplementedError(impl)
+    if self._impl == 'maskgit':
+      loss = (loss * prior['mask']).sum(-1) / prior['mask'].sum(-1)
     if free:
       loss = jnp.maximum(loss, free)
     return loss
@@ -299,6 +338,9 @@ class MultiEncoder(nj.Module):
         len(v) == 3 and re.match(cnn_keys, k))}
     self.mlp_shapes = {k: v for k, v in shapes.items() if (
         len(v) in (1, 2) and re.match(mlp_keys, k))}
+    assert not ("token" in self.mlp_shapes and \
+                "token_embed" in self.mlp_shapes), \
+      "Probably shouldn't have both token and token_embed, use token$?"
     self.shapes = {**self.cnn_shapes, **self.mlp_shapes}
     print('Encoder CNN shapes:', self.cnn_shapes)
     print('Encoder MLP shapes:', self.mlp_shapes)
@@ -310,6 +352,7 @@ class MultiEncoder(nj.Module):
       raise NotImplementedError(cnn)
     if self.mlp_shapes:
       self._mlp = MLP(None, mlp_layers, mlp_units, dist='none', **mlp_kw)
+    self.preprocessors = {}  
 
   def __call__(self, data):
     some_key, some_shape = list(self.shapes.items())[0]
@@ -443,6 +486,47 @@ class ImageEncoderResnet(nj.Module):
     # print(x.shape)
     return x
 
+def __call__(self, x):
+    stages = int(np.log2(self._shape[-2]) - np.log2(self._minres))
+    depth = self._depth * 2 ** (stages - 1)
+    x = jaxutils.cast_to_compute(x)
+    x = self.get('in', Linear, (self._minres, self._minres, depth))(x)
+    for i in range(stages):
+      for j in range(self._blocks):
+        skip = x
+        kw = {**self._kw, 'preact': True}
+        x = self.get(f's{i}b{j}conv1', Conv2D, depth, 3, **kw)(x)
+        x = self.get(f's{i}b{j}conv2', Conv2D, depth, 3, **kw)(x)
+        x += skip
+        # print(x.shape)
+      depth //= 2
+      kw = {**self._kw, 'preact': False}
+      if i == stages - 1:
+        kw = {}
+        depth = self._shape[-1]
+      if self._resize == 'stride':
+        x = self.get(f's{i}res', Conv2D, depth, 4, 2, transp=True, **kw)(x)
+      elif self._resize == 'stride3':
+        s = 3 if i == stages - 1 else 2
+        k = 5 if i == stages - 1 else 4
+        x = self.get(f's{i}res', Conv2D, depth, k, s, transp=True, **kw)(x)
+      elif self._resize == 'resize':
+        x = jnp.repeat(jnp.repeat(x, 2, 1), 2, 2)
+        x = self.get(f's{i}res', Conv2D, depth, 3, 1, **kw)(x)
+      else:
+        raise NotImplementedError(self._resize)
+    if max(x.shape[1:-1]) > max(self._shape[:-1]):
+      padh = (x.shape[1] - self._shape[0]) / 2
+      padw = (x.shape[2] - self._shape[1]) / 2
+      x = x[:, int(np.ceil(padh)): -int(padh), :]
+      x = x[:, :, int(np.ceil(padw)): -int(padw)]
+    # print(x.shape)
+    assert x.shape[-3:] == self._shape, (x.shape, self._shape)
+    if self._sigmoid:
+      x = jax.nn.sigmoid(x)
+    else:
+      x = x + 0.5
+    return x
 
 class ImageDecoderResnet(nj.Module):
 
@@ -496,6 +580,7 @@ class ImageDecoderResnet(nj.Module):
     else:
       x = x + 0.5
     return x
+
 
 
 class MLP(nj.Module):

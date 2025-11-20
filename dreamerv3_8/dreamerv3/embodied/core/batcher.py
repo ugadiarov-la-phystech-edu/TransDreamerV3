@@ -11,9 +11,11 @@ class Batcher:
 
   def __init__(
       self, sources, workers=0, postprocess=None,
-      prefetch_source=4, prefetch_batch=2):
+      prefetch_source=4, prefetch_batch=2,
+      preprocessors=None):
     self._workers = workers
     self._postprocess = postprocess
+    self.preprocessors = preprocessors or {}
     if workers:
       # Round-robin assign sources to workers.
       self._running = True
@@ -32,12 +34,13 @@ class Batcher:
         self._threads.append(creator)
       self._batches = queuelib.Queue(prefetch_batch)
       batcher = threading.Thread(
-          target=self._batcher, args=(self._queues, self._batches),
+          target=self._batcher, args=(self._queues, self._batches, self.preprocessors),
           daemon=True)
       batcher.start()
       self._threads.append(batcher)
     else:
       self._iterators = [source() for source in sources]
+      self.preprocessors = {k: v() for k, v in preprocessors.items()}
     self._once = False
 
   def close(self):
@@ -62,7 +65,17 @@ class Batcher:
       batch = self._batches.get()
     else:
       elems = [next(x) for x in self._iterators]
-      batch = {k: np.stack([x[k] for x in elems], 0) for k in elems[0]}
+      batch = {}
+      for k in elems[0]:
+        bx = [x[k] for x in elems]
+        if k in self.preprocessors:
+          preproc = self.preprocessors[k](bx)
+          for preproc_key, preproc_val in preproc.items():
+            batch[f"{k}_{preproc_key}"] = preproc_val
+        else:
+          batch[k] = np.stack(bx, 0)
+      if self._postprocess:
+        batch = self._postprocess(batch)
     if isinstance(batch, Exception):
       raise batch
     return batch
@@ -86,12 +99,21 @@ class Batcher:
 
   def _batcher(self, sources, output):
     try:
+      preprocessors = {k: v() for k, v in preprocessors.items()}
       while self._running:
         elems = [x.get() for x in sources]
         for elem in elems:
           if isinstance(elem, Exception):
             raise elem
-        batch = {k: np.stack([x[k] for x in elems], 0) for k in elems[0]}
+        batch = {}
+        for k in elems[0]:
+          bx = [x[k] for x in elems]
+          if k in preprocessors:
+            preproc = preprocessors[k](bx)
+            for preproc_key, preproc_val in preproc.items():
+              batch[f"{k}_{preproc_key}"] = preproc_val
+          else:
+            batch[k] = np.stack(bx, 0)
         if self._postprocess:
           batch = self._postprocess(batch)
         output.put(batch)  # Will wait here if the queue is full.

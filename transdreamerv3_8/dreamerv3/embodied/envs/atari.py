@@ -35,13 +35,14 @@ class Atari(embodied.Env):
     self._sticky = sticky
     self._length = length
     self._random = np.random.RandomState(seed)
-    with self.LOCK:
-      self._env = gym.envs.atari.AtariEnv(
-          game=name,
-          obs_type='image',
-          frameskip=1, repeat_action_probability=0.25 if sticky else 0.0,
-          full_action_space=(actions == 'all'))
+    self._env = gym.envs.atari.AtariEnv(
+        game=name,
+        obs_type='image',
+        frameskip=1, repeat_action_probability=0.25 if sticky else 0.0,
+        full_action_space=(actions == 'all'))
     assert self._env.unwrapped.get_action_meanings()[0] == 'NOOP'
+    self.observation_space = self._env.observation_space
+    self.action_space = self._env.action_space
     shape = self._env.observation_space.shape
     self._buffer = [np.zeros(shape, np.uint8) for _ in range(2)]
     self._ale = self._env.unwrapped.ale
