@@ -1,8 +1,8 @@
 # TransDreamerV3: Implanting Transformer In DreamerV3
 
-CS6604 Class project
-
-In this project, we introduce TransDreamerV3, a reinforcement learning model that enhances the DreamerV3 architecture by integrating a transformer encoder. The model is designed to improve memory and decision-making capabilities in complex environments. We conducted experiments on Atari-Boxing, Atari-Freeway, Atari-Pong, and Crafter tasks, where TransDreamerV3 demonstrated improved performance over DreamerV3, particularly in the Atari-Freeway and Crafter tasks. While issues in the Minecraft task and limited training across all tasks were noted, TransDreamerV3 displays advancement in world model-based reinforcement learning, leveraging transformer architectures.
+# TODO
+* Fix policy for Homegrid
+* Add videos to comet loging
 
 
 ## About this repo
@@ -38,5 +38,18 @@ pip install --upgrade "jax[cuda12_pip]" -f https://storage.googleapis.com/jax-re
 Model checkpoints are available upon request. 
 
 
+## Examples of run
 
+
+```
+COMET_API_KEY=YOUR_API dreamer/train.py \
+--logdir ~/dreamers/TDV3_logdir/atari_boxing \  
+--configs atari \
+--task atari_boxing \
+--loss_scales.lm 0  \
+--run.use_comet True \
+--run.comet_project transdreamerv \
+--run.comet_workspace dreamerv3
+
+```
 
