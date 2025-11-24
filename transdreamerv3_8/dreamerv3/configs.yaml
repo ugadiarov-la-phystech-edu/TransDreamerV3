@@ -50,6 +50,7 @@ defaults:
     use_comet: False
     comet_project:  dreamerv3
     comet_workspace: 'default'
+    comet_log_video_every: 10  # Log policy videos every N episodes
 
   envs: {amount: 4, parallel: process, length: 0, reset: True, restart: True, discretize: 0, checks: False}
   wrapper: {length: 0, reset: True, discretize: 0, checks: False}
