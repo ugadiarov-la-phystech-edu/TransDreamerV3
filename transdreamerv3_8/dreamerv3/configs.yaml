@@ -7,6 +7,7 @@ defaults:
   replay: uniform
   replay_size: 1e6
   replay_online: False
+  dataset_excluded_keys: ["info", "language_info"]
   eval_dir: ''
   filter: '.*'
 
@@ -18,8 +19,8 @@ defaults:
     debug_nans: False
     logical_cpus: 0
     debug: False
-    policy_devices: [3]
-    train_devices: [3]
+    policy_devices: [0]
+    train_devices: [0]
     metrics_every: 10
 
   run:

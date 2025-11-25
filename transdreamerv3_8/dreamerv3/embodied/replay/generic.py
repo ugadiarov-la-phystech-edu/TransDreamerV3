@@ -12,7 +12,7 @@ class Generic:
 
   def __init__(
       self, length, capacity, remover, sampler, limiter, directory,
-      overlap=None, online=False, chunks=1024):
+      overlap=None, online=False, dataset_excluded_keys=None, chunks=1024):
     assert capacity is None or 1 <= capacity
     self.length = length
     self.capacity = capacity
@@ -38,6 +38,8 @@ class Generic:
         'insert_wait_count': 0,
     }
     self.load()
+    self.dataset_excluded_keys = set(dataset_excluded_keys) if dataset_excluded_keys is not None else []
+    print(f"Replay dataset excluded keys: {self.dataset_excluded_keys}")
 
   def __len__(self):
     return len(self.table)
@@ -61,6 +63,10 @@ class Generic:
 
   def add(self, step, worker=0, load=False):
     step = {k: v for k, v in step.items() if not k.startswith('log_')}
+    if "token" in step and len(step["token"].shape) == 2:
+      prev_shape = step["token"].shape
+      step["token"] = step["token"].argmax(-1)
+      print(f"Fixed shape {prev_shape}->{step['token'].shape}")
     step['id'] = np.asarray(embodied.uuid(step.get('id')))
     stream = self.streams[worker]
     stream.append(step)
@@ -102,7 +108,8 @@ class Generic:
         seq = self.table[self.sampler()]
     else:
       seq = self.table[self.sampler()]
-    seq = {k: [step[k] for step in seq] for k in seq[0]}
+    seq = {k: [step[k] for step in seq] for k in seq[0] if k not in
+           self.dataset_excluded_keys}
     seq = {k: embodied.convert(v) for k, v in seq.items()}
     if 'is_first' in seq:
       seq['is_first'][0] = True

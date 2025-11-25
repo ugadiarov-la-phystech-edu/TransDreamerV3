@@ -30,27 +30,26 @@ class HomeGrid(embodied.Env):
                    p_teleport=p_teleport,
                    p_unsafe=p_unsafe,
                    fixed_state=fixed_state)
-    print(env.observation_space)
     env = homegrid.wrappers.Gym26Wrapper(env)
-    print(env.observation_space)
     self._env = env
     self.observation_space = self._env.observation_space
     self.action_space = self._env.action_space
+ 
     self.wrappers = [
       from_gym.FromGym,
       lambda e: embodied.wrappers.ResizeImage(e, (64,64)),
     ]
-    self._env = self.wrappers[0](self._env)
-    self._env = self.wrappers[1](self._env)
+    #self._env = self.wrappers[0](self._env)
+    #self._env = self.wrappers[1](self._env)
     self.vis = vis
 
   @property
   def obs_space(self):
-    return self._env.obs_space
+    return self.observation_space
   
   @property
   def act_space(self):
-    return self._env.act_space
+    return self.action_space
   
   def reset(self):
     obs = self._env.reset()
@@ -59,8 +58,8 @@ class HomeGrid(embodied.Env):
     return obs
 
   def step(self, action):
-    print(self._env.step(action))
-    obs, rew, done, info = self._env.step(action)
+    result = self._env.step(action)
+    obs, rew, done, info = result
     if self.vis:
       obs["log_image"] = self.render_with_text(obs["log_language_info"])
     return obs, rew, done, info

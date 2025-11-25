@@ -124,7 +124,7 @@ def make_replay(
   length = config.batch_length
   size = config.replay_size // 10 if is_eval else config.replay_size
   if config.replay == 'uniform' or is_eval:
-    kw = {'online': config.replay_online}
+    kw = {'online': config.replay_online, 'dataset_excluded_keys': config.dataset_excluded_keys}
     if rate_limit and config.run.train_ratio > 0:
       kw['samples_per_insert'] = config.run.train_ratio / config.batch_length
       kw['tolerance'] = 10 * config.batch_size
@@ -183,7 +183,9 @@ def make_env(config, **overrides):
 
 def wrap_env(env, config):
   args = config.wrapper
-
+  if hasattr(env, "wrappers"):
+    for w in env.wrappers:
+      env = w(env)
   for name, space in env.act_space.items():
  
     if name == 'reset':

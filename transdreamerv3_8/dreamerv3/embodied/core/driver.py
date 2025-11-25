@@ -20,6 +20,7 @@ class Driver:
     self._kwargs = kwargs
     self._on_steps = []
     self._on_episodes = []
+    self.policy_exclude_keys = kwargs.pop("exclude_keys", [])
     self.reset()
 
   def reset(self):
@@ -47,7 +48,9 @@ class Driver:
     obs = self._env.step(acts)
     obs = {k: convert(v) for k, v in obs.items()}
     assert all(len(x) == len(self._env) for x in obs.values()), obs
-    acts, self._state = policy(obs, self._state, **self._kwargs)
+    policy_obs = {k: v for k, v in obs.items() if k not in
+                  self.policy_exclude_keys}
+    acts, self._state = policy(policy_obs, self._state, **self._kwargs)
     acts = {k: convert(v) for k, v in acts.items()}
     if obs['is_last'].any():
       mask = 1 - obs['is_last']

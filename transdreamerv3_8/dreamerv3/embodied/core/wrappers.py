@@ -221,6 +221,7 @@ class CheckSpaces(base.Wrapper):
 
   def step(self, action):
     for key, value in action.items():
+      if "language" in key or key.startswith("log_"): continue
       self._check(value, self.env.act_space[key], key)
     obs = self.env.step(action)
     for key, value in obs.items():
@@ -229,7 +230,7 @@ class CheckSpaces(base.Wrapper):
 
   def _check(self, value, space, key):
     if not isinstance(value, (
-        np.ndarray, np.generic, list, tuple, int, float, bool)):
+        np.ndarray, np.generic, list, tuple, int, float, bool, str)):
       raise TypeError(f'Invalid type {type(value)} for key {key}.')
     if value in space:
       return

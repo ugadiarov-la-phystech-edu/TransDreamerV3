@@ -42,6 +42,10 @@ class Logger:
   def video(self, name, value):
     self.add({name: value})
 
+  def text(self, name, value):
+    assert isinstance(value, str), (type(value), str(value)[:100])
+    self.add({name: value})
+  
   def write(self, fps=False):
     if fps:
       value = self._compute_fps()
@@ -96,7 +100,7 @@ class TerminalOutput:
 
   def __call__(self, summaries):
     step = max(s for s, _, _, in summaries)
-    scalars = {k: float(v) for _, k, v in summaries if len(v.shape) == 0}
+    scalars = {k: float(v) for _, k, v in summaries if isinstance(v, np.ndarray) and len(v.shape) == 0}
     scalars = {k: v for k, v in scalars.items() if self._pattern.search(k)}
     formatted = {k: self._format_value(v) for k, v in scalars.items()}
     if self._console:
@@ -136,17 +140,24 @@ class TerminalOutput:
 class JSONLOutput(AsyncOutput):
 
   def __init__(
-      self, logdir, filename='metrics.jsonl', pattern=r'.*', parallel=True):
+      self, logdir, filename='metrics.jsonl', pattern=r'.*', parallel=True, strings=False):
     super().__init__(self._write, parallel)
     self._filename = filename
     self._pattern = re.compile(pattern)
     self._logdir = path.Path(logdir)
     self._logdir.mkdirs()
+    self._strings = strings
 
   def _write(self, summaries):
     bystep = collections.defaultdict(dict)
     for step, name, value in summaries:
-      if len(value.shape) == 0 and self._pattern.search(name):
+      #if len(value.shape) == 0 and self._pattern.search(name):
+        #bystep[step][name] = float(value)
+      if not self._pattern.search(name):
+        continue
+      if isinstance(value, str) and self._strings:
+        bystep[step][name] = value
+      if isinstance(value, np.ndarray) and len(value.shape) == 0:
         bystep[step][name] = float(value)
     lines = ''.join([
         json.dumps({'step': step, **scalars}) + '\n'
