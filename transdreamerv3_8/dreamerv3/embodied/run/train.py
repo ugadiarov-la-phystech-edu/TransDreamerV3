@@ -10,14 +10,14 @@ def train(agent, env, replay, logger, args):
   logdir = embodied.Path(args.logdir)
   logdir.mkdirs()
   print('Logdir', logdir)
-
-   # Initialize Comet ML if enabled
+  
+  # Initialize Comet ML if enabled
   comet_experiment = None
-  if args.get("use_comet", False):
+  if args.use_comet:
     comet_experiment = Experiment(
         api_key=comet_api_key,
-        project_name=args.get('comet_project', 'transdreamerv3'),
-        workspace=args.get('comet_workspace', 'default'),
+        project_name=args.comet_project,
+        workspace=args.comet_workspace,
         auto_metric_logging=False,
     )
     comet_experiment.set_name(logdir.name)

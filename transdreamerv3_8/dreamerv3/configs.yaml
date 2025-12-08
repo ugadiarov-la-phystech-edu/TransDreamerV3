@@ -37,6 +37,7 @@ defaults:
     train_fill: 0
     eval_fill: 0
     log_zeros: False
+    save_local_logs: True # Whether to save logs locally
     log_keys_video: [image]
     log_keys_sum: '^$'
     log_keys_mean: '(log_entropy)'

@@ -107,14 +107,19 @@ def main(argv=None):
 
 def make_logger(parsed, logdir, step, config):
   multiplier = config.env.get(config.task.split('_')[0], {}).get('repeat', 1)
-  logger = embodied.Logger(step, [
-      embodied.logger.TerminalOutput(config.filter),
-      embodied.logger.JSONLOutput(logdir, 'metrics.jsonl'),
-      embodied.logger.JSONLOutput(logdir, 'scores.jsonl', 'episode/score'),
-      #embodied.logger.TensorBoardOutput(logdir),
-      # embodied.logger.WandBOutput(logdir.name, config),
-      # embodied.logger.MLFlowOutput(logdir.name),
-  ], multiplier)
+  outputs = [embodied.logger.TerminalOutput(config.filter)]
+  
+  # Only add file outputs if save_local_logs is enabled
+  if config.run.save_local_logs:
+    outputs.extend([
+        embodied.logger.JSONLOutput(logdir, 'metrics.jsonl'),
+        embodied.logger.JSONLOutput(logdir, 'scores.jsonl', 'episode/score'),
+        #embodied.logger.TensorBoardOutput(logdir),
+        # embodied.logger.WandBOutput(logdir.name, config),
+        # embodied.logger.MLFlowOutput(logdir.name),
+    ])
+  
+  logger = embodied.Logger(step, outputs, multiplier)
   return logger
 
 
