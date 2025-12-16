@@ -5,6 +5,8 @@ import json
 import os
 import re
 import time
+import traceback
+import warnings
 
 import numpy as np
 
@@ -321,3 +323,66 @@ def _encode_gif(frames, fps):
     raise IOError('\n'.join([' '.join(cmd), err.decode('utf8')]))
   del proc
   return out
+
+
+class CometOutput:
+
+  def __init__(self, config, suppress_exceptions=False, video_fps=20):
+    import comet_ml
+    mode = 'create'
+    if config.comet.run_id is not None:
+      mode = 'get'
+
+    experiment = comet_ml.start(
+      project_name=config.comet.project,
+      experiment_key=config.comet.run_id,
+      mode=mode,
+    )
+    experiment.log_parameters(dict(config))
+    experiment.set_name(config.comet.name)
+    self._experiment = experiment
+    self._suppress_exceptions = suppress_exceptions
+    self._video_fps = video_fps
+
+  def __call__(self, summaries):
+    bystep = collections.defaultdict(dict)
+    experiment = self._experiment
+    for step, name, value in summaries:
+      try:
+        if len(value.shape) == 0:
+          bystep[step][name] = float(value)
+        elif len(value.shape) == 1:
+          experiment.log_histogram_3d(value, name=name, step=step)
+        elif len(value.shape) == 2:
+          value = np.clip(255 * value, 0, 255).astype(np.uint8)
+          value = np.transpose(value, [2, 0, 1])
+          experiment.log_image(value, name=name, step=step)
+        elif len(value.shape) == 3:
+          value = np.clip(255 * value, 0, 255).astype(np.uint8)
+          value = np.transpose(value, [2, 0, 1])
+          experiment.log_image(value, name=name, step=step)
+        elif len(value.shape) == 4:
+          from moviepy.editor import ImageSequenceClip
+          # Sanity check that the channeld dimension is last
+          assert value.shape[3] in [1, 3, 4], f"Invalid shape: {value.shape}"
+          value = np.transpose(value, [0, 3, 1, 2])
+          # If the video is a float, convert it to uint8
+          if np.issubdtype(value.dtype, np.floating):
+            value = np.clip(255 * value, 0, 255).astype(np.uint8)
+          value = list(value)
+          clip = ImageSequenceClip(value, fps=self._video_fps)
+          path = f'/tmp/{name}.mp4'
+          clip.write_videofile(path)
+          try:
+            experiment.log_video(path, name=name, step=step)
+          finally:
+            os.remove(path)
+      except Exception as exc:
+        if self._suppress_exceptions:
+            warnings.warn(f'Exception while logging to comet: step={step} name={name}\n{traceback.format_exc()}')
+        else:
+            raise exc
+
+    for step, metrics in bystep.items():
+      metrics['global_step'] = step
+      self._experiment.log_metrics(metrics, step=step)

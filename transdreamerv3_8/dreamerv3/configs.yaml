@@ -10,6 +10,11 @@ defaults:
   eval_dir: ''
   filter: '.*'
 
+  comet:
+    project: null
+    name: run-0
+    run_id: null
+
   jax:
     platform: gpu
     jit: True
