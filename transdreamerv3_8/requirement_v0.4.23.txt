@@ -1,0 +1,23 @@
+cloudpickle==2.2.0
+crafter
+chex==0.1.7
+atari_py==0.2.9
+opencv-python==4.7.0.72
+gym==0.19.0
+jax==0.4.23
+jaxlib[cuda11_pip]==0.4.23
+numpy==1.23.5
+optax==0.2.0
+rich==14.2.0
+ruamel.yaml==0.17.2
+tensorflow-cpu==2.12.0
+tensorflow_probability==0.19.0
+comet_ml
+moviepy==1.0.3
+
+# for cuda 11
+# https://jax.readthedocs.io/en/latest/installation.html#nvidia-gpu
+# pip install --upgrade pip
+# pip install --upgrade "jax[cuda11_pip]" -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
+
+# used python version 3.10.12
